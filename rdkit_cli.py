@@ -6,7 +6,7 @@ from rdkit import Chem
 import numpy as np
 from typing import Optional
 from rich.progress import track
-
+from rdkit.Chem import AllChem
 app = Typer(help="RDKit CLI tools")
 
 @app.command()
@@ -20,6 +20,8 @@ def standardize(file_path: str,
     for m in track(mols):
         if m == None:
             pass
+        m.RemoveAllConformers()
+        AllChem.Compute2DCoords(m)
         stdm = standardize_mol(m)
         if stdm:
             if remove_salt:
