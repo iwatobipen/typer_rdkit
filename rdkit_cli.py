@@ -1,6 +1,7 @@
 import os
 import sys
 import typer
+import pathlib
 from typer import Typer
 from useful_rdkit_utils import mol2numpy_fp
 from chembl_structure_pipeline import standardize_mol
@@ -12,14 +13,54 @@ from rdkit.Chem import AllChem
 from rdkit.Chem import RDConfig
 from rdkit.Chem import Descriptors
 from rdkit.Chem import rdFMCS
+from rdkit.Chem import PandasTools
 import numpy as np
+import pandas as pd
 from typing import Optional
 from rich.progress import track
 fw_path = os.path.join(RDConfig.RDContribDir, 'FreeWilson')
+nibrssf_path = os.path.join(RDConfig.RDContribDir, 'NIBRSubstructureFilters')
 sys.path.append(fw_path)
+sys.path.append(nibrssf_path)
 from freewilson import FWDecompose, FWBuild, predictions_to_csv
-
+import assignSubstructureFilters
 app = Typer(help="RDKit CLI tools")
+
+def mol2smi(mol):
+    if mol == None:
+        return "*"
+    else:
+        return Chem.MolToSmiles(mol)
+
+
+@app.command()
+def checkprops(file_path: str=typer.Argument(..., help="str path to input SDF")):
+    """Read SDF and return prop names
+    """
+    df = PandasTools.LoadSDF(file_path)
+    print(df.columns.to_list())               
+
+@app.command()
+def sdf2smi(file_path: str=typer.Argument(..., help="str path to input SDF"),
+            separator: str=typer.Option("comma", help="separator of output smi file commma|tab|whitespace"),
+            out_file: Optional[str]=typer.Option(None, help="path of output file, output file is saved in same driectry of inputfile")
+            ):
+    """Converter of SDF to SMILES
+    """
+    if separator=="comma":
+        s=","
+    elif separator=="tab":
+        s="\t"
+    else:
+        s=" "
+    df = PandasTools.LoadSDF(file_path)
+    if out_file == None:
+        inputpath = pathlib.Path(file_path)
+        from_suffix = inputpath.suffix
+        out_file = f"{file_path}".replace(from_suffix,'.smi')
+    df['smiles'] = df.ROMol.apply(mol2smi)
+    df.to_csv(out_file, sep=s, index=False)
+
 
 @app.command()
 def standardize(file_path: str=typer.Argument(..., help="str path to input SDF"),
@@ -97,28 +138,73 @@ def freewilson(file_path: str=typer.Argument(..., help="str path to input SDF"),
                scaffold: Optional[str]=typer.Option(None, help="path of scaffold shoud be mol format"),
                out_file: Optional[str]=typer.Option(None, help="path of output file")
                ):
+    """CLI based Free Wilson Analysis
+    
+    """
     
     mols = [m for m in Chem.SDMolSupplier(file_path) if m != None]
     scores = [float(m.GetProp(target_val)) for m in mols]
+    train_data = {}
+    for idx, m in enumerate(mols):
+        train_data[Chem.MolToSmiles(m)] = scores[idx]
     if scaffold != None:
         scaf = Chem.MolFromMolFile(scaffold)
     else:
         scaf = None
-    print(usefmcs)
     if usefmcs or scaf==None:
         print('Will find MCS, it will take long time if you path thousands or more compounds')
         mcs = rdFMCS.FindMCS(mols, threshold=threshold, 
                              atomCompare=rdFMCS.AtomCompare.CompareAny, 
                              completeRingsOnly=True)
         scaf = mcs.queryMol
-    print('SCAF')
     decomp = FWDecompose(scaf, mols, scores)
     print(f"Training R^2 is {decomp.r2:0.2f}")
-    preds = FWBuild(decomp, )
+    preds = FWBuild(decomp)
     if out_file == None:
         out_file = f"{file_path}".replace('.sdf','_fw.csv')
-    with open(out_file, 'w') as outstream: 
-        predictions_to_csv(outstream, decomp, preds)
+
+    out_file = open(out_file, 'w')
+    out_file.write("idx\tsmi\tpred_val\treal_val\n")
+    for idx, row in enumerate(train_data.items()):
+        out_file.write(f"train_{idx}\t{row[0]}\t*\t{row[1]}\n")
+    for idx, pred in enumerate(preds):
+        smi = Chem.MolToSmiles(Chem.MolFromSmiles(pred.smiles))
+        pred_val = pred.prediction
+        if smi in list(train_data.keys()):
+            real_val = train_data[smi]
+        else:
+            real_val = ""
+        out_file.write(f"enum_{idx}\t{smi}\t{pred_val}\t{real_val}\n")
+    out_file.close()
+
+@app.command()
+def nibrssfilter(file_path: str=typer.Argument(..., help="str path to input csv\nthe files should have header line"),
+                 smilescol: str=typer.Argument(..., help='name of SMILES column'),
+                 separator: str=typer.Option('comma', help="separator of csv, comma|tab|white-space"),
+                 out_file: Optional[str]=typer.Option(None, help="path of output file csv")
+                 ):
+    """Substructure filters for hit triaginge
+
+    More details on this work can be found in a recent publication: Schuffenhauer, A. et al. Evolution of Novartis' small molecule screening deck design, J. Med. Chem. (2020), DOI. https://dx.doi.org/10.1021/acs.jmedchem.0c01332
+    """
+    if separator=="comma":
+        s=","
+    elif separator=="tab":
+        s="\t"
+    else:
+        s=" "
+    df = pd.read_csv(file_path, sep=s)
+    res = assignSubstructureFilters.assignFilters(df, nameSmilesColumn=smilescol)
+    tmpdf = pd.DataFrame.from_records(res, columns=assignSubstructureFilters.FilterMatch._fields)
+    df = df.merge(tmpdf, how='left', left_index=True, right_index=True)
+    if out_file == None:
+        inputpath = pathlib.Path(file_path)
+        from_suffix = inputpath.suffix
+        out_file = f"{file_path}".replace(from_suffix,'_filtered.csv')
+
+    df.to_csv(out_file,sep=s, index=False)
+    print('Done')
+
 
 def main():
     app()

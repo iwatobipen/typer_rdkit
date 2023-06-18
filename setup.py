@@ -1,15 +1,15 @@
 from setuptools import setup
 
 setup(
-    name="rdkit-cli",
+    name="rdkit_cli",
     version="0.1",
     py_modules=[],
     install_requires=[
-        "typer",
-        "typer-cli",
-        "useful_rdkit_utils",
-        "numpy",
-        "rdkit"
+        #"typer",
+        #"typer-cli",
+        #"useful_rdkit_utils",
+        #"numpy",
+        #"rdkit"
     ],
     entry_points="""
     [console_scripts]
