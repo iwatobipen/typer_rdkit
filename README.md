@@ -1,5 +1,8 @@
 # typer_rdkit
 
+## Author
+ - iwatobipen
+
 ## Description
  This package is CLI tool of rdkit
 
@@ -9,6 +12,8 @@
 - typer
 - typer-cli
 - useful_rdkit_utils
+- rdkit
+
 
 ## Install
 ```
